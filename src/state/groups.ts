@@ -30,8 +30,9 @@ type Store = {
   loaded: boolean;
 
   loadFromDisk: () => Promise<void>;
-  addGroup: (name?: string) => string;
+  addGroup: (name?: string, opts?: { activate?: boolean }) => string;
   renameGroup: (id: string, name: string) => void;
+  appendNotes: (id: string, text: string) => void;
   deleteGroup: (id: string) => void;
   reorderGroups: (orderedIds: string[]) => void;
   setActiveGroup: (id: string) => void;
@@ -109,11 +110,12 @@ export const useGroups = create<Store>((set, get) => ({
     });
   },
 
-  addGroup: (name) => {
+  addGroup: (name, opts) => {
     const group = makeGroup(name?.trim() || 'untitled');
+    const activate = opts?.activate ?? true;
     set((s) => ({
       groups: [...s.groups, group],
-      activeGroupId: group.id,
+      activeGroupId: activate ? group.id : s.activeGroupId,
       focusedPaneByGroup: {
         ...s.focusedPaneByGroup,
         [group.id]: firstLeafId(group.layout),
@@ -125,6 +127,16 @@ export const useGroups = create<Store>((set, get) => ({
   renameGroup: (id, name) => {
     set((s) => ({
       groups: s.groups.map((g) => (g.id === id ? { ...g, name: name.trim() || g.name } : g)),
+    }));
+  },
+
+  appendNotes: (id, text) => {
+    set((s) => ({
+      groups: s.groups.map((g) => {
+        if (g.id !== id) return g;
+        const sep = g.notes.length > 0 && !g.notes.endsWith('\n') ? '\n' : '';
+        return { ...g, notes: g.notes + sep + text };
+      }),
     }));
   },
 

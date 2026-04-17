@@ -5,6 +5,7 @@ import { Sidebar } from './components/Sidebar';
 import { PaneTree } from './components/PaneTree';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { useGroups, startPersistence, flushPersistence } from './state/groups';
+import { startCliListener } from './ipc/cli';
 
 import './App.css';
 
@@ -25,6 +26,18 @@ function App() {
   useEffect(() => {
     void loadFromDisk().then(() => startPersistence());
   }, [loadFromDisk]);
+
+  useEffect(() => {
+    let unlistenPromise: Promise<() => void> | null = null;
+    try {
+      unlistenPromise = startCliListener();
+    } catch {
+      // not in Tauri (plain vite preview); ignore
+    }
+    return () => {
+      void unlistenPromise?.then((fn) => fn());
+    };
+  }, []);
 
   useEffect(() => {
     let unlistenPromise: Promise<() => void> | null = null;

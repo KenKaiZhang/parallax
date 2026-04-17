@@ -17,6 +17,7 @@ export function PaneTree({ groupId, node, focusedLeafId }: Props) {
     return (
       <Terminal
         leafId={node.id}
+        groupId={groupId}
         cwd={node.cwd}
         focused={focusedLeafId === node.id}
         onFocus={() => setFocus(groupId, node.id)}

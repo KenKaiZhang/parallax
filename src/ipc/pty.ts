@@ -1,7 +1,13 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
-type SpawnOpts = { cwd?: string; cols: number; rows: number };
+type SpawnOpts = {
+  cwd?: string;
+  cols: number;
+  rows: number;
+  groupId?: string;
+  paneId?: string;
+};
 type SpawnResult = { id: string };
 
 const MAX_BUFFER = 1_000_000; // ~1MB of binary terminal output per pty
@@ -17,14 +23,18 @@ function decodeBase64(b64: string): string {
   return atob(b64);
 }
 
-async function ensurePty(leafId: string, cwd: string | undefined): Promise<string> {
+async function ensurePty(
+  leafId: string,
+  cwd: string | undefined,
+  groupId: string | undefined,
+): Promise<string> {
   const existing = leafToPty.get(leafId);
   if (existing) return existing;
   const pending = spawning.get(leafId);
   if (pending) return pending;
 
   const promise = (async () => {
-    const opts: SpawnOpts = { cwd, cols: 80, rows: 24 };
+    const opts: SpawnOpts = { cwd, cols: 80, rows: 24, groupId, paneId: leafId };
     const result = await invoke<SpawnResult>('pty_spawn', { opts });
     const ptyId = result.id;
     leafToPty.set(leafId, ptyId);
@@ -54,9 +64,9 @@ async function ensurePty(leafId: string, cwd: string | undefined): Promise<strin
 
 export async function attachPty(
   leafId: string,
-  opts: { cwd?: string; onData: (chunk: string) => void },
+  opts: { cwd?: string; groupId?: string; onData: (chunk: string) => void },
 ): Promise<{ ptyId: string; detach: () => void }> {
-  const ptyId = await ensurePty(leafId, opts.cwd);
+  const ptyId = await ensurePty(leafId, opts.cwd, opts.groupId);
   const initial = buffers.get(ptyId);
   if (initial && initial.length > 0) opts.onData(initial);
   subscribers.get(ptyId)?.add(opts.onData);

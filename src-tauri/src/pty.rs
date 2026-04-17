@@ -25,6 +25,10 @@ pub struct SpawnOptions {
     pub cwd: Option<String>,
     pub cols: u16,
     pub rows: u16,
+    #[serde(default, rename = "groupId")]
+    pub group_id: String,
+    #[serde(default, rename = "paneId")]
+    pub pane_id: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -58,6 +62,25 @@ pub fn pty_spawn(
     }
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
+
+    // Hooks for the parallax-cli binary running inside this shell.
+    if let Ok(sock) = crate::cli_server::socket_path(&app) {
+        cmd.env("PARALLAX_SOCK", sock);
+    }
+    if !opts.group_id.is_empty() {
+        cmd.env("PARALLAX_GROUP", &opts.group_id);
+    }
+    if !opts.pane_id.is_empty() {
+        cmd.env("PARALLAX_PANE", &opts.pane_id);
+    }
+    // Make `parallax-cli` discoverable: prepend the directory of the GUI binary
+    // (target/debug in dev, .app/Contents/MacOS in release) to PATH.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let existing = std::env::var("PATH").unwrap_or_default();
+            cmd.env("PATH", format!("{}:{}", dir.display(), existing));
+        }
+    }
 
     let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
     drop(pair.slave);

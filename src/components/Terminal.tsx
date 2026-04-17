@@ -9,6 +9,7 @@ import '@xterm/xterm/css/xterm.css';
 
 type Props = {
   leafId: string;
+  groupId: string;
   cwd?: string;
   focused: boolean;
   onFocus: () => void;
@@ -16,7 +17,7 @@ type Props = {
 
 const APP_SHORTCUT_KEYS = new Set(['d', 'D', 'w', 'W', 't', 'T', '[', ']', '{', '}']);
 
-export function Terminal({ leafId, cwd, focused, onFocus }: Props) {
+export function Terminal({ leafId, groupId, cwd, focused, onFocus }: Props) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
@@ -100,7 +101,7 @@ export function Terminal({ leafId, cwd, focused, onFocus }: Props) {
       }
     };
 
-    void attachPty(leafId, { cwd, onData }).then((handle) => {
+    void attachPty(leafId, { cwd, groupId, onData }).then((handle) => {
       if (cancelled) {
         handle.detach();
         return;
@@ -123,7 +124,7 @@ export function Terminal({ leafId, cwd, focused, onFocus }: Props) {
       term.dispose();
       termRef.current = null;
     };
-  }, [leafId, cwd]);
+  }, [leafId, cwd, groupId]);
 
   useEffect(() => {
     if (focused) {
