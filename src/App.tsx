@@ -5,7 +5,11 @@ import { Sidebar } from './components/Sidebar';
 import { PaneTree } from './components/PaneTree';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { useGroups, startPersistence, flushPersistence } from './state/groups';
+import { useConfirm } from './state/confirm';
 import { startCliListener } from './ipc/cli';
+import { startDragDropListener } from './ipc/dragDrop';
+import { hasForegroundProcess } from './ipc/pty';
+import { firstLeafId } from './state/layout';
 
 import './App.css';
 
@@ -42,6 +46,18 @@ function App() {
   useEffect(() => {
     let unlistenPromise: Promise<() => void> | null = null;
     try {
+      unlistenPromise = startDragDropListener();
+    } catch {
+      // not in Tauri; ignore
+    }
+    return () => {
+      void unlistenPromise?.then((fn) => fn());
+    };
+  }, []);
+
+  useEffect(() => {
+    let unlistenPromise: Promise<() => void> | null = null;
+    try {
       unlistenPromise = getCurrentWindow().onCloseRequested(async () => {
         await flushPersistence();
       });
@@ -54,6 +70,26 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const requestClose = async () => {
+      const { activeGroupId, focusedPaneByGroup, groups } = useGroups.getState();
+      if (!activeGroupId) return;
+      const group = groups.find((g) => g.id === activeGroupId);
+      if (!group) return;
+      const leafId = focusedPaneByGroup[activeGroupId] ?? firstLeafId(group.layout);
+      const busy = await hasForegroundProcess(leafId);
+      if (!busy) {
+        closeFocused();
+        return;
+      }
+      useConfirm.getState().ask({
+        title: 'Close pane?',
+        message: 'A process is still running in this pane. Closing will terminate it.',
+        confirmLabel: 'Close',
+        destructive: true,
+        onConfirm: () => closeFocused(),
+      });
+    };
+
     const onKey = (e: KeyboardEvent) => {
       if (!e.metaKey) return;
       switch (e.key) {
@@ -65,7 +101,7 @@ function App() {
         case 'w':
         case 'W':
           e.preventDefault();
-          closeFocused();
+          void requestClose();
           return;
         case 't':
         case 'T':

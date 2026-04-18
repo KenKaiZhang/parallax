@@ -86,6 +86,16 @@ export async function resizePty(ptyId: string, cols: number, rows: number): Prom
   await invoke('pty_resize', { id: ptyId, cols, rows });
 }
 
+export async function hasForegroundProcess(leafId: string): Promise<boolean> {
+  const ptyId = leafToPty.get(leafId);
+  if (!ptyId) return false;
+  try {
+    return await invoke<boolean>('pty_has_foreground_process', { id: ptyId });
+  } catch {
+    return false;
+  }
+}
+
 export async function killLeafPty(leafId: string): Promise<void> {
   const ptyId = leafToPty.get(leafId);
   if (!ptyId) return;

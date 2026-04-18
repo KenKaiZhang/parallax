@@ -14,6 +14,7 @@ pub fn run() {
             pty::pty_write,
             pty::pty_resize,
             pty::pty_kill,
+            pty::pty_has_foreground_process,
             storage::state_load,
             storage::state_save,
         ])

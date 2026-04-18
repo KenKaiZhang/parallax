@@ -25,6 +25,10 @@ export function firstLeafId(root: PaneNode): string {
   return root.kind === 'leaf' ? root.id : firstLeafId(root.a);
 }
 
+export function lastLeafId(root: PaneNode): string {
+  return root.kind === 'leaf' ? root.id : lastLeafId(root.b);
+}
+
 export function splitLeaf(
   root: PaneNode,
   leafId: string,
@@ -61,32 +65,50 @@ export function closeLeaf(
     return root.id === leafId ? { root: null, focusFallback: null } : { root, focusFallback: null };
   }
 
-  function walk(node: PaneNode): { node: PaneNode | null; replaced: boolean } {
+  type WalkResult = { node: PaneNode | null; replaced: boolean; fallback: string | null };
+
+  function walk(node: PaneNode): WalkResult {
     if (node.kind === 'leaf') {
       return node.id === leafId
-        ? { node: null, replaced: true }
-        : { node, replaced: false };
+        ? { node: null, replaced: true, fallback: null }
+        : { node, replaced: false, fallback: null };
     }
     const aResult = walk(node.a);
     if (aResult.replaced) {
-      // If the direct child `a` was the closed leaf, promote sibling `b`.
-      // Otherwise `a`'s subtree was rewritten — keep this split with the new `a`.
-      const next = aResult.node === null ? node.b : { ...node, a: aResult.node };
-      return { node: next, replaced: true };
+      // If the direct child `a` was the closed leaf, promote sibling `b` and
+      // pick the leaf in `b` nearest to where `a` lived (its first leaf).
+      // Otherwise `a`'s subtree was rewritten — keep this split with the new `a`
+      // and bubble whatever fallback was already chosen deeper.
+      if (aResult.node === null) {
+        return { node: node.b, replaced: true, fallback: firstLeafId(node.b) };
+      }
+      return { node: { ...node, a: aResult.node }, replaced: true, fallback: aResult.fallback };
     }
     const bResult = walk(node.b);
     if (bResult.replaced) {
-      const next = bResult.node === null ? node.a : { ...node, b: bResult.node };
-      return { node: next, replaced: true };
+      if (bResult.node === null) {
+        return { node: node.a, replaced: true, fallback: lastLeafId(node.a) };
+      }
+      return { node: { ...node, b: bResult.node }, replaced: true, fallback: bResult.fallback };
     }
-    return { node, replaced: false };
+    return { node, replaced: false, fallback: null };
   }
 
   const result = walk(root);
-  if (!result.replaced || !result.node) {
-    return { root: result.node, focusFallback: result.node ? firstLeafId(result.node) : null };
+  return { root: result.node, focusFallback: result.fallback };
+}
+
+export function swapLeaves(root: PaneNode, idA: string, idB: string): PaneNode {
+  if (idA === idB) return root;
+  function walk(node: PaneNode): PaneNode {
+    if (node.kind === 'leaf') {
+      if (node.id === idA) return { ...node, id: idB };
+      if (node.id === idB) return { ...node, id: idA };
+      return node;
+    }
+    return { ...node, a: walk(node.a), b: walk(node.b) };
   }
-  return { root: result.node, focusFallback: firstLeafId(result.node) };
+  return walk(root);
 }
 
 export function setSplitRatio(root: PaneNode, splitId: string, ratio: number): PaneNode {

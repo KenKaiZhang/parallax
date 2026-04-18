@@ -17,8 +17,11 @@ export function GroupList() {
 
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState('');
-  const [dragId, setDragId] = useState<string | null>(null);
-  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const [drag, setDrag] = useState<{
+    sourceId: string;
+    targetId: string | null;
+    pos: 'above' | 'below';
+  } | null>(null);
 
   const submitRename = () => {
     if (renamingId) renameGroup(renamingId, draftName);
@@ -46,6 +49,63 @@ export function GroupList() {
     });
   };
 
+  const startDrag = (sourceId: string) => (e: React.PointerEvent<HTMLLIElement>) => {
+    if (e.button !== 0 || renamingId === sourceId) return;
+    if ((e.target as HTMLElement).closest('button, input')) return;
+
+    const startX = e.clientX;
+    const startY = e.clientY;
+    let dragStarted = false;
+
+    const updateHover = (ev: PointerEvent) => {
+      const el = document.elementFromPoint(ev.clientX, ev.clientY);
+      const li = (el as Element | null)?.closest('li[data-group-id]') as HTMLElement | null;
+      if (!li) {
+        setDrag((d) => (d ? { ...d, targetId: null } : d));
+        return;
+      }
+      const targetId = li.dataset.groupId!;
+      const rect = li.getBoundingClientRect();
+      const pos: 'above' | 'below' =
+        ev.clientY < rect.top + rect.height / 2 ? 'above' : 'below';
+      setDrag({ sourceId, targetId, pos });
+    };
+
+    const onMove = (ev: PointerEvent) => {
+      if (!dragStarted) {
+        const dx = ev.clientX - startX;
+        const dy = ev.clientY - startY;
+        if (dx * dx + dy * dy < 16) return;
+        dragStarted = true;
+        document.body.style.cursor = 'grabbing';
+        document.body.style.userSelect = 'none';
+        setDrag({ sourceId, targetId: null, pos: 'above' });
+      }
+      updateHover(ev);
+    };
+
+    const onUp = () => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      if (!dragStarted) return;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      setDrag((curr) => {
+        if (curr && curr.targetId && curr.targetId !== curr.sourceId) {
+          const ordered = groups.map((x) => x.id).filter((id) => id !== curr.sourceId);
+          const targetIdx = ordered.indexOf(curr.targetId);
+          const insertIdx = curr.pos === 'above' ? targetIdx : targetIdx + 1;
+          ordered.splice(insertIdx, 0, curr.sourceId);
+          reorder(ordered);
+        }
+        return null;
+      });
+    };
+
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+  };
+
   return (
     <div className="group-list">
       <div className="sidebar-section-header">
@@ -66,18 +126,20 @@ export function GroupList() {
         {groups.map((g) => {
           const isActive = g.id === activeId;
           const isRenaming = renamingId === g.id;
-          const isDropTarget = dropTargetId === g.id && dragId !== g.id;
+          const isDropTarget =
+            drag !== null && drag.targetId === g.id && drag.sourceId !== g.id;
           return (
             <li
               key={g.id}
+              data-group-id={g.id}
               className={[
                 'group-item',
                 isActive && 'group-item-active',
-                isDropTarget && 'group-item-drop-target',
+                isDropTarget && drag?.pos === 'above' && 'drop-above',
+                isDropTarget && drag?.pos === 'below' && 'drop-below',
               ]
                 .filter(Boolean)
                 .join(' ')}
-              draggable={!isRenaming}
               title={isRenaming ? undefined : 'Double-click to rename'}
               onClick={() => setActive(g.id)}
               onDoubleClick={() => startRename(g.id, g.name)}
@@ -85,31 +147,7 @@ export function GroupList() {
                 e.preventDefault();
                 handleDelete(g.id, g.name);
               }}
-              onDragStart={(e) => {
-                setDragId(g.id);
-                e.dataTransfer.effectAllowed = 'move';
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                if (dragId && dragId !== g.id) setDropTargetId(g.id);
-              }}
-              onDragLeave={() => {
-                if (dropTargetId === g.id) setDropTargetId(null);
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                if (!dragId || dragId === g.id) return;
-                const remaining = groups.map((x) => x.id).filter((id) => id !== dragId);
-                const targetIdx = remaining.indexOf(g.id);
-                remaining.splice(targetIdx, 0, dragId);
-                reorder(remaining);
-                setDragId(null);
-                setDropTargetId(null);
-              }}
-              onDragEnd={() => {
-                setDragId(null);
-                setDropTargetId(null);
-              }}
+              onPointerDown={startDrag(g.id)}
             >
               {isRenaming ? (
                 <input

@@ -13,6 +13,7 @@ pub struct PtyEntry {
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
     child: Mutex<Box<dyn portable_pty::Child + Send + Sync>>,
+    child_pid: Option<u32>,
 }
 
 #[derive(Default)]
@@ -83,6 +84,7 @@ pub fn pty_spawn(
     }
 
     let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
+    let child_pid = child.process_id();
     drop(pair.slave);
 
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
@@ -116,6 +118,7 @@ pub fn pty_spawn(
             master: Mutex::new(pair.master),
             writer: Mutex::new(writer),
             child: Mutex::new(child),
+            child_pid,
         },
     );
 
@@ -152,6 +155,23 @@ pub fn pty_resize(
             pixel_height: 0,
         })
         .map_err(|e| e.to_string())
+}
+
+/// Returns true if the pty's controlling tty has a foreground process group
+/// other than the shell itself — i.e. the user is running a command. Used to
+/// prompt before Cmd+W kills it. Unix-only (parallax is macOS today).
+#[tauri::command]
+pub fn pty_has_foreground_process(
+    registry: State<'_, PtyRegistry>,
+    id: String,
+) -> Result<bool, String> {
+    let entry = registry.inner.get(&id).ok_or_else(|| "pty not found".to_string())?;
+    let master = entry.master.lock().map_err(|e| e.to_string())?;
+    let leader = master.process_group_leader();
+    Ok(match (leader, entry.child_pid) {
+        (Some(pgid), Some(shell_pid)) => pgid as u32 != shell_pid,
+        _ => false,
+    })
 }
 
 #[tauri::command]

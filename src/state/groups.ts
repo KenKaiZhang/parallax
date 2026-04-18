@@ -9,6 +9,7 @@ import {
   newLeaf,
   setSplitRatio,
   splitLeaf,
+  swapLeaves,
 } from './layout';
 import { killLeafPty } from '../ipc/pty';
 import { loadState, saveState } from '../ipc/storage';
@@ -40,6 +41,7 @@ type Store = {
   splitFocused: (dir: 'row' | 'column') => void;
   closeFocused: () => void;
   setSplitRatio: (groupId: string, splitId: string, ratio: number) => void;
+  swapPanes: (groupId: string, idA: string, idB: string) => void;
   setFocus: (groupId: string, leafId: string) => void;
   cycleGroup: (delta: 1 | -1) => void;
   cyclePane: (delta: 1 | -1) => void;
@@ -239,6 +241,15 @@ export const useGroups = create<Store>((set, get) => ({
     set((s) => ({
       groups: s.groups.map((g) =>
         g.id === groupId ? { ...g, layout: setSplitRatio(g.layout, splitId, ratio) } : g,
+      ),
+    }));
+  },
+
+  swapPanes: (groupId, idA, idB) => {
+    if (idA === idB) return;
+    set((s) => ({
+      groups: s.groups.map((g) =>
+        g.id === groupId ? { ...g, layout: swapLeaves(g.layout, idA, idB) } : g,
       ),
     }));
   },
