@@ -29,4 +29,9 @@ export type PersistedState = {
   sidebarWidth?: number;
   sidebarHidden?: boolean;
   notesRatio?: number;
+  settings?: {
+    fontFamily?: string;
+    fontSize?: number;
+    themeId?: string;
+  };
 };

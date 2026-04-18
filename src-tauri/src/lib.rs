@@ -3,6 +3,8 @@ mod pty;
 mod storage;
 
 use pty::PtyRegistry;
+use tauri::menu::{MenuBuilder, MenuItem, SubmenuBuilder};
+use tauri::Emitter;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -19,6 +21,60 @@ pub fn run() {
             storage::state_save,
         ])
         .setup(|app| {
+            // Install our own app menu so Cmd+, opens Settings (the default
+            // macOS app menu has no Preferences item, but WKWebView still
+            // swallows the shortcut). Routing through a real menu accelerator
+            // is the most reliable way to claim Cmd+, in a Tauri webview.
+            let preferences = MenuItem::with_id(
+                app,
+                "preferences",
+                "Settings…",
+                true,
+                Some("CmdOrCtrl+,"),
+            )?;
+
+            let app_submenu = SubmenuBuilder::new(app, "parallax")
+                .about(None)
+                .separator()
+                .item(&preferences)
+                .separator()
+                .services()
+                .separator()
+                .hide()
+                .hide_others()
+                .show_all()
+                .separator()
+                .quit()
+                .build()?;
+
+            let edit_submenu = SubmenuBuilder::new(app, "Edit")
+                .undo()
+                .redo()
+                .separator()
+                .cut()
+                .copy()
+                .paste()
+                .select_all()
+                .build()?;
+
+            let window_submenu = SubmenuBuilder::new(app, "Window")
+                .minimize()
+                .fullscreen()
+                .close_window()
+                .build()?;
+
+            let menu = MenuBuilder::new(app)
+                .items(&[&app_submenu, &edit_submenu, &window_submenu])
+                .build()?;
+
+            app.set_menu(menu)?;
+
+            app.on_menu_event(move |app_handle, event| {
+                if event.id() == "preferences" {
+                    let _ = app_handle.emit("parallax://open-settings", ());
+                }
+            });
+
             let handle = app.handle().clone();
             cli_server::start(handle)
                 .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;

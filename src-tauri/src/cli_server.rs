@@ -15,6 +15,11 @@ const ALLOWED_CMDS: &[&str] = &[
     "notes.set",
     "group.rename",
     "group.new",
+    "group.activate",
+    "pane.split",
+    "pane.focus",
+    "pane.close",
+    "pane.send",
 ];
 
 #[derive(Deserialize, Serialize, Clone)]

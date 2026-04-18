@@ -6,6 +6,8 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { attachPty, resizePty, writePty } from '../ipc/pty';
 import { registerPane, unregisterPane } from '../ipc/paneRegistry';
 import { useGroups } from '../state/groups';
+import { useSettings } from '../state/settings';
+import { findTheme } from '../themes';
 import { GripIcon } from './icons';
 
 import '@xterm/xterm/css/xterm.css';
@@ -25,51 +27,38 @@ type Props = {
   onFocus: () => void;
 };
 
-const APP_SHORTCUT_KEYS = new Set(['d', 'D', 'w', 'W', 't', 'T', '[', ']', '{', '}']);
+const APP_SHORTCUT_KEYS = new Set([
+  'd', 'D', 'w', 'W', 't', 'T', 'b', 'B', '[', ']', '{', '}', ',',
+]);
 
 export function Terminal({ leafId, groupId, cwd, focused, onFocus }: Props) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
   const swapPanes = useGroups((s) => s.swapPanes);
+  const fontFamily = useSettings((s) => s.fontFamily);
+  const fontSize = useSettings((s) => s.fontSize);
+  const themeId = useSettings((s) => s.themeId);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
+    const initial = useSettings.getState();
+    const initialTheme = findTheme(initial.themeId);
     const term = new XTerm({
-      fontFamily: '"SF Mono", Menlo, Monaco, "Courier New", monospace',
-      fontSize: 13,
+      fontFamily: initial.fontFamily,
+      fontSize: initial.fontSize,
       lineHeight: 1.2,
       cursorBlink: true,
       allowProposedApi: true,
-      theme: {
-        background: '#0f1115',
-        foreground: '#e4e4e7',
-        cursor: '#e4e4e7',
-        cursorAccent: '#0f1115',
-        selectionBackground: '#374151',
-        black: '#15171b',
-        brightBlack: '#52525b',
-        red: '#f87171',
-        brightRed: '#fca5a5',
-        green: '#4ade80',
-        brightGreen: '#86efac',
-        yellow: '#facc15',
-        brightYellow: '#fde047',
-        blue: '#60a5fa',
-        brightBlue: '#93c5fd',
-        magenta: '#c084fc',
-        brightMagenta: '#d8b4fe',
-        cyan: '#22d3ee',
-        brightCyan: '#67e8f9',
-        white: '#e4e4e7',
-        brightWhite: '#fafafa',
-      },
+      theme: initialTheme.terminal,
     });
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.loadAddon(new WebLinksAddon());
+    fitAddonRef.current = fitAddon;
 
     // Prevent xterm from swallowing our app-level Cmd shortcuts.
     term.attachCustomKeyEventHandler((event) => {
@@ -97,16 +86,44 @@ export function Terminal({ leafId, groupId, cwd, focused, onFocus }: Props) {
       }
     };
 
-    requestAnimationFrame(safeFit);
+    // Coalesce ResizeObserver bursts to one fit per frame. Without this, a single
+    // split fires the observer 2-4 times → multiple SIGWINCHes → shells (zsh +
+    // Starship etc.) re-emit the prompt for each, leaving stacked dotted lines.
+    let pendingFit = 0;
+    const scheduleFit = () => {
+      if (pendingFit) return;
+      pendingFit = requestAnimationFrame(() => {
+        pendingFit = 0;
+        safeFit();
+      });
+    };
 
     let cancelled = false;
+    requestAnimationFrame(safeFit);
+    // Webfonts (JetBrains Mono) load asynchronously. xterm caches glyph metrics
+    // from whatever font was available at first measure — without this re-fit,
+    // the terminal stays sized for the fallback font even after the woff2 lands.
+    void document.fonts.ready.then(() => {
+      if (!cancelled) safeFit();
+    });
     let ptyId: string | null = null;
     let detach: (() => void) | null = null;
     const inputDisp = term.onData((data) => {
       if (ptyId) void writePty(ptyId, data);
     });
+    // Debounce SIGWINCH separately from the visual fit. xterm reflows immediately
+    // (so the user sees a responsive resize), but the shell only gets one SIGWINCH
+    // per logical resize event — preventing the prompt from being re-emitted
+    // multiple times for splits or rapid drags.
+    let pendingResize: number | null = null;
+    let lastDims: { cols: number; rows: number } | null = null;
     const resizeDisp = term.onResize(({ cols, rows }) => {
-      if (ptyId) void resizePty(ptyId, cols, rows);
+      lastDims = { cols, rows };
+      if (pendingResize !== null) clearTimeout(pendingResize);
+      pendingResize = window.setTimeout(() => {
+        pendingResize = null;
+        if (ptyId && lastDims) void resizePty(ptyId, lastDims.cols, lastDims.rows);
+      }, 60);
     });
 
     const onData = (chunk: string) => {
@@ -132,11 +149,13 @@ export function Terminal({ leafId, groupId, cwd, focused, onFocus }: Props) {
       void resizePty(handle.ptyId, term.cols, term.rows);
     });
 
-    const observer = new ResizeObserver(() => safeFit());
+    const observer = new ResizeObserver(scheduleFit);
     observer.observe(container);
 
     return () => {
       cancelled = true;
+      if (pendingFit) cancelAnimationFrame(pendingFit);
+      if (pendingResize !== null) clearTimeout(pendingResize);
       observer.disconnect();
       inputDisp.dispose();
       resizeDisp.dispose();
@@ -144,8 +163,30 @@ export function Terminal({ leafId, groupId, cwd, focused, onFocus }: Props) {
       unregisterPane(leafId);
       term.dispose();
       termRef.current = null;
+      fitAddonRef.current = null;
     };
   }, [leafId, cwd, groupId]);
+
+  // Apply font/theme changes live without tearing down the pty connection.
+  useEffect(() => {
+    const term = termRef.current;
+    const fitAddon = fitAddonRef.current;
+    if (!term) return;
+    term.options.fontFamily = fontFamily;
+    term.options.fontSize = fontSize;
+    term.options.theme = findTheme(themeId).terminal;
+    // Wait for any new webfont referenced in fontFamily to actually load
+    // before re-measuring cell dimensions; then force a renderer repaint so
+    // the glyph atlas is rebuilt with the new font.
+    void document.fonts.ready.then(() => {
+      try {
+        fitAddon?.fit();
+        term.refresh(0, term.rows - 1);
+      } catch {
+        // term may have been disposed
+      }
+    });
+  }, [fontFamily, fontSize, themeId]);
 
   useEffect(() => {
     if (focused) {

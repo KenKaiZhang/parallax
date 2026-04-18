@@ -31,6 +31,11 @@ enum Commands {
         #[command(subcommand)]
         action: GroupAction,
     },
+    /// Pane commands (operate on the focused pane in the current group)
+    Pane {
+        #[command(subcommand)]
+        action: PaneAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -59,6 +64,32 @@ enum GroupAction {
     Rename { name: String },
     /// Create a new group (does NOT switch the active pane to it)
     New { name: String },
+    /// Switch the active group by name or id
+    Activate { reference: String },
+}
+
+#[derive(Subcommand)]
+enum PaneAction {
+    /// Split the focused pane. h = side-by-side, v = stacked
+    Split {
+        #[arg(value_parser = ["h", "v"])]
+        dir: String,
+    },
+    /// Move focus to the next or previous pane in the group
+    Focus {
+        #[arg(value_parser = ["next", "prev"])]
+        direction: String,
+    },
+    /// Close the focused pane
+    Close,
+    /// Send text to the focused pane (no newline unless --enter is passed)
+    Send {
+        /// Append a carriage return after the text (i.e. "press Enter")
+        #[arg(short, long)]
+        enter: bool,
+        #[arg(trailing_var_arg = true, required = true)]
+        text: Vec<String>,
+    },
 }
 
 #[derive(Deserialize)]
@@ -205,6 +236,52 @@ fn cmd_group_new(name: &str) -> Result<(), String> {
     send("group.new", serde_json::json!({ "name": name }))
 }
 
+fn cmd_group_activate(reference: &str) -> Result<(), String> {
+    let state = load_state()?;
+    let lower = reference.to_lowercase();
+    let by_id = state.groups.iter().find(|g| g.id == reference);
+    let resolved_id: String = if let Some(g) = by_id {
+        g.id.clone()
+    } else {
+        let by_name: Vec<&GroupView> = state
+            .groups
+            .iter()
+            .filter(|g| g.name.to_lowercase() == lower)
+            .collect();
+        match by_name.len() {
+            0 => return Err(format!("no group matched '{}'", reference)),
+            1 => by_name[0].id.clone(),
+            _ => {
+                return Err(format!(
+                    "'{}' matches multiple groups; use the id (see `px group list`)",
+                    reference
+                ))
+            }
+        }
+    };
+    send("group.activate", serde_json::json!({ "id": resolved_id }))
+}
+
+fn cmd_pane_split(dir: &str) -> Result<(), String> {
+    send("pane.split", serde_json::json!({ "dir": dir }))
+}
+
+fn cmd_pane_focus(direction: &str) -> Result<(), String> {
+    send("pane.focus", serde_json::json!({ "direction": direction }))
+}
+
+fn cmd_pane_close() -> Result<(), String> {
+    send("pane.close", serde_json::json!({}))
+}
+
+fn cmd_pane_send(text: &[String], enter: bool) -> Result<(), String> {
+    let joined = text.join(" ");
+    send(
+        "pane.send",
+        serde_json::json!({ "text": joined, "enter": enter }),
+    )
+}
+
 fn run() -> Result<(), String> {
     let cli = Cli::parse();
     match cli.command {
@@ -219,6 +296,13 @@ fn run() -> Result<(), String> {
             GroupAction::List => cmd_group_list(),
             GroupAction::Rename { name } => cmd_group_rename(&name),
             GroupAction::New { name } => cmd_group_new(&name),
+            GroupAction::Activate { reference } => cmd_group_activate(&reference),
+        },
+        Commands::Pane { action } => match action {
+            PaneAction::Split { dir } => cmd_pane_split(&dir),
+            PaneAction::Focus { direction } => cmd_pane_focus(&direction),
+            PaneAction::Close => cmd_pane_close(),
+            PaneAction::Send { enter, text } => cmd_pane_send(&text, enter),
         },
     }
 }

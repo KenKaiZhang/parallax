@@ -13,6 +13,7 @@ import {
 } from './layout';
 import { killLeafPty } from '../ipc/pty';
 import { loadState, saveState } from '../ipc/storage';
+import { snapshotSettings, useSettings } from './settings';
 
 export const SIDEBAR_MIN = 180;
 export const SIDEBAR_MAX = 480;
@@ -80,6 +81,7 @@ export const useGroups = create<Store>((set, get) => ({
 
   loadFromDisk: async () => {
     const state = await loadState();
+    useSettings.getState().hydrate(state?.settings);
     if (!state || state.groups.length === 0) {
       const initial = makeGroup('untitled');
       set({
@@ -306,7 +308,25 @@ function snapshot(state: Store): PersistedState {
     sidebarWidth: state.sidebarWidth,
     sidebarHidden: state.sidebarHidden,
     notesRatio: state.notesRatio,
+    settings: snapshotSettings(),
   };
+}
+
+function settingsChanged(a: PersistedState['settings'], b: PersistedState['settings']) {
+  if (a === b) return false;
+  if (!a || !b) return true;
+  return (
+    a.fontFamily !== b.fontFamily ||
+    a.fontSize !== b.fontSize ||
+    a.themeId !== b.themeId
+  );
+}
+
+function schedulePersist() {
+  if (persistTimer != null) clearTimeout(persistTimer);
+  persistTimer = window.setTimeout(() => {
+    void saveState(snapshot(useGroups.getState()));
+  }, PERSIST_DEBOUNCE);
 }
 
 export function startPersistence() {
@@ -319,15 +339,18 @@ export function startPersistence() {
       next.activeGroupId === prev.activeGroupId &&
       next.sidebarWidth === prev.sidebarWidth &&
       next.sidebarHidden === prev.sidebarHidden &&
-      next.notesRatio === prev.notesRatio
+      next.notesRatio === prev.notesRatio &&
+      !settingsChanged(next.settings, prev.settings)
     ) {
       return;
     }
     prev = next;
-    if (persistTimer != null) clearTimeout(persistTimer);
-    persistTimer = window.setTimeout(() => {
-      void saveState(next);
-    }, PERSIST_DEBOUNCE);
+    schedulePersist();
+  });
+  useSettings.subscribe(() => {
+    if (!useGroups.getState().loaded) return;
+    prev = snapshot(useGroups.getState());
+    schedulePersist();
   });
 }
 
