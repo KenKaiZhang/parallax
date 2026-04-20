@@ -82,16 +82,14 @@ function App() {
   useEffect(() => {
     let unlistenPromise: Promise<() => void> | null = null;
     try {
-      unlistenPromise = getCurrentWindow().onCloseRequested(async (event) => {
-        // Take ownership of the close so Tauri doesn't sit waiting on the
-        // saveState IPC round-trip during shutdown — that's what was making
-        // the X button feel dead. Flush, then explicitly destroy.
-        event.preventDefault();
-        try {
-          await flushPersistence();
-        } finally {
-          await getCurrentWindow().destroy();
-        }
+      unlistenPromise = getCurrentWindow().onCloseRequested(() => {
+        // Sync, fire-and-forget. Returning a Promise (or calling
+        // preventDefault) makes Tauri suspend the close until JS resolves —
+        // and the saveState IPC round-trip can stall mid-shutdown, leaving
+        // the X button apparently dead. The 400 ms persistence debounce
+        // already covers ~all state; this kicks off a final write that
+        // races with window teardown — best-effort but never blocking.
+        void flushPersistence();
       });
     } catch {
       // not running in Tauri (e.g. plain vite dev) — ignore
